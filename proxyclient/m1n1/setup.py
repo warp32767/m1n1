@@ -28,4 +28,9 @@ fb = u.ba.video.base
 
 print(f"m1n1 base: 0x{u.base:x}")
 
-PMU(u).reset_panic_counter()
+# T8030 primary-PMU panic-counter access has not been validated. This is
+# optional housekeeping, so do not issue those writes during A13 bring-up.
+is_t8030 = ("/arm-io/atc-phy" in u.adt and
+            "atc-phy,t8030" in u.adt["/arm-io/atc-phy"].compatible)
+if not is_t8030:
+    PMU(u).reset_panic_counter()

@@ -467,6 +467,17 @@ def parse_prop(node, path, node_name, name, v, is_template=False):
         # parsing this correctly would require a second pass
         t = Array(len(v) // 4, Int32ul)
 
+    # A13 AOP audio identifiers can contain more than one FourCC.
+    # Preserve layouts we do not yet decode without losing any bytes.
+    if name == "identifier" and t is FourCC and len(v) != 4:
+        return None, v
+
+    if t is SpeakerThieleSmall:
+        try:
+            return t, Sequence(t, Terminated).parse(v)[0]
+        except ConstructError:
+            return None, v
+
     if t is not None:
         v = Sequence(t, Terminated).parse(v)[0]
         return t, v

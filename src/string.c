@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 
 #include <stdbool.h>
-
+#include <stddef.h>
+#include <stdint.h>
 #include "string.h"
 
 // Routines based on The Public Domain C Library
@@ -230,4 +231,19 @@ long atol(const char *s)
         val = -val;
 
     return val;
+}
+
+//duct tape
+__attribute__((noinline, used))
+size_t wcslen(const uint32_t *str)
+{
+    const volatile uint32_t *p = str;
+    size_t len = 0;
+
+    while (*p) {
+        ++p;
+        ++len;
+    }
+
+    return len;
 }

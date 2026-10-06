@@ -114,6 +114,10 @@ CHICKENS_OBJECTS := $(patsubst %,chickens/%, \
 	icestorm.o \
 	monsoon_mistral.o \
 	sawtooth.o \
+	lightning.o \
+	thunder.o \
+	tempset.o \
+	vortex.o \
 	twister.o)
 
 DCP_OBJECTS := $(patsubst %,dcp/%, \

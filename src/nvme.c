@@ -43,6 +43,9 @@
 #define NVME_BOOT_STATUS    0x1300
 #define NVME_BOOT_STATUS_OK 0xde71ce55
 
+#define NVME_UNKNOWN_CTRL                0x24008
+#define NVME_UNKNOWN_CTRL_PRP_NULL_CHECK BIT(11)
+
 #define NVME_LINEAR_SQ_CTRL    0x24908
 #define NVME_LINEAR_SQ_CTRL_EN BIT(0)
 
@@ -386,7 +389,8 @@ bool nvme_init(void)
         return NULL;
     }
 
-    if (adt_is_compatible(adt, node, "iop-ans2,t8015"))
+    if (adt_is_compatible(adt, node, "iop-ans2,t8015") ||
+        adt_is_compatible(adt, node, "iop,ascwrap-v2"))
         // A11 has NVMe with normal submission queues and 16 tags.
         nvme_type = NVME_T8015;
     else if (adt_get_property(adt, node, "nvme-secure-bar"))
@@ -457,6 +461,8 @@ bool nvme_init(void)
     if (nvme_type >= NVME_T8103) {
         /* setup controller and NVMMU for linear submission queue */
         set32(nvme_base + NVME_LINEAR_SQ_CTRL, NVME_LINEAR_SQ_CTRL_EN);
+        if (nvme_type == NVME_T8103)
+            clear32(nvme_base + NVME_UNKNOWN_CTRL, NVME_UNKNOWN_CTRL_PRP_NULL_CHECK);
         write32(nvme_base + NVME_MAX_PEND_CMDS_CTRL,
                 ((nvme_queue_size - 1) << 16) | (nvme_queue_size - 1));
         write32(nvmmu_base + NVMMU_NUM, nvme_queue_size - 1);

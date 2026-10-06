@@ -57,6 +57,7 @@
 #define HID1_RCC_DIS_STALL_INACTIVE_MDR_CTL    BIT(21)
 #define HID1_ZCL_RF_RESTART_THRESHOLD(x)       ((ULONG(x)) << 22)
 #define HID1_ZCL_RF_RESTART_THRESHOLD_MASK     GENMASK(23, 22)
+#define HID1_RCC_FORCE_ALL_IEX_L3_CLKS_ON      BIT(23)
 #define HID1_DIS_SPEC_MDSB_INVL_ROB_FLUSH      BIT(24)
 #define HID1_DIS_LSP_FLUSH_WITH_CONTEXT_SWITCH BIT(25)
 #define HID1_DIS_WFE                           BIT(26)
@@ -151,6 +152,7 @@
 #define EHID1_EN_LFSR                            BIT(63)
 
 #define SYS_IMP_APL_HID3                                   sys_reg(3, 0, 15, 3, 0)
+#define HID3_DISABLE_COLOR_OPTIONS                         BIT(2)
 #define HID3_DISABLE_DC_ZVA_CMD_ONLY                       BIT(25)
 #define HID3_DISABLE_ARBITER_FIX_BIF_CRD                   BIT(44)
 #define HID3_DIS_XMON_SNP_EVICT_TRIGGER_L2_STARAVTION_MODE BIT(50)
@@ -216,6 +218,7 @@
 
 #define SYS_IMP_APL_EHID4                                         sys_reg(3, 0, 15, 4, 1)
 #define SYS_IMP_APL_EHID3                                         sys_reg(3, 0, 15, 3, 1)
+#define EHID3_DISABLE_COLOR_OPTIONS                               BIT(2)
 #define EHID3_DISABLE_DC_ZVA_CMD_ONLY                             BIT(25)
 #define EHID4_DISABLE_HW_PREF_LD                                  BIT(0)
 #define EHID4_DISABLE_HW_PREF_ST                                  BIT(1)
@@ -307,6 +310,10 @@
 #define HID8_DATA_SET_ID3_VALUE_MASK GENMASK(63, 60)
 
 #define SYS_IMP_APL_HID9                sys_reg(3, 0, 15, 9, 0)
+#define HID9_FIX_BUG_47221499                BIT(54)
+#define HID9_DISABLE_NT_WIDGET_FOR_UNALIGNED BIT(52)
+#define HID9_FIX_BUG_57817908                BIT(50)
+#define HID9_FIX_BUG_51667717                BIT(49)
 #define HID9_AVL_UNK17                  BIT(17)
 #define HID9_TSO_ALLOW_DC_ZVA_WC        BIT(26)
 #define HID9_TSO_SERIALIZE_VLD_MICROOPS BIT(29)
@@ -318,17 +325,19 @@
 #define EHID9_DEV_2_THROTTLE_LIMIT_MASK GENMASK(11, 6)
 #define EHID9_DEV_2_THROTTLE_LIMIT(x)   ((ULONG(x)) << 6)
 
-#define SYS_IMP_APL_HID10               sys_reg(3, 0, 15, 10, 0)
-#define SYS_IMP_APL_EHID10              sys_reg(3, 0, 15, 10, 1)
-#define HID10_FORCE_WAIT_STATE_DRAIN_UC BIT(32)
-#define HID10_DISABLE_ZVA_TEMPORAL_TSO  BIT(49)
+#define SYS_IMP_APL_HID10                                  sys_reg(3, 0, 15, 10, 0)
+#define SYS_IMP_APL_EHID10                                 sys_reg(3, 0, 15, 10, 1)
+#define EHID10_RCC_DISABLE_POWER_SAVE_PREFETCHER_CLOCK_OFF BIT(19)
+#define HID10_FORCE_WAIT_STATE_DRAIN_UC                    BIT(32)
+#define HID10_DISABLE_ZVA_TEMPORAL_TSO                     BIT(49)
 
-#define SYS_IMP_APL_HID11             sys_reg(3, 0, 15, 11, 0)
-#define SYS_IMP_APL_HID11_LEGACY      sys_reg(3, 0, 15, 13, 0) /* A7-A9 */
-#define HID11_DISABLE_FILL_C1_BUB_OPT BIT(7)
-#define HID11_ENABLE_FIX_UC_55719865  BIT(15)
-#define HID11_DISABLE_DMP             BIT(30)
-#define HID11_DISABLE_LD_NT_WIDGET    BIT(59)
+#define SYS_IMP_APL_HID11                  sys_reg(3, 0, 15, 11, 0)
+#define SYS_IMP_APL_HID11_LEGACY           sys_reg(3, 0, 15, 13, 0) /* A7-A9 */
+#define HID11_DISABLE_X64_NT_LAUNCH_OPTION BIT(1)
+#define HID11_DISABLE_FILL_C1_BUB_OPT      BIT(7)
+#define HID11_ENABLE_FIX_UC_55719865       BIT(15)
+#define HID11_DISABLE_DMP                  BIT(30)
+#define HID11_DISABLE_LD_NT_WIDGET         BIT(59)
 
 #define SYS_IMP_APL_EHID11           sys_reg(3, 0, 15, 11, 1)
 #define EHID11_SMB_DRAIN_THRESH_MASK GENMASK(41, 40)
@@ -365,6 +374,9 @@
 #define HID14_ENABLE_NEX_POWER_GATING BIT(32)
 
 #define SYS_IMP_APL_HID16         sys_reg(3, 0, 15, 15, 2)
+#define HID16_DISABLE_X_PICK_RS45              BIT(60)
+#define HID16_ENABLE_RS4_SEC                   BIT(57)
+#define HID16_ENABLE_AGGRESSIVE_LEQ_THROTTLING BIT(18)
 #define HID16_AVL_UNK12           BIT(12)
 #define HID16_SPAREBIT0           BIT(56)
 #define HID16_SPAREBIT3           BIT(59)

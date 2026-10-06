@@ -133,6 +133,7 @@ typedef struct dwc2_dev {
     u32 ep0_read_buffer_len;
 
     const union usb_setup_packet *setup_pkt;
+    dart_dev_t *dart;
 
     dwc2_endpoint_t endpoints[MAX_ENDPOINTS];
 
@@ -503,9 +504,11 @@ static int usb_dwc2_ep_activate(dwc2_dev_t *dev, u8 ep, u8 type, u32 max_packet_
         write32(ep_ctl_reg, 0);
         u8 next_tx_fifo = pep;
         val |= next_tx_fifo << 22; // TX_FIFO_SHIFT
-        write32(dev->regs + DWC2_DTXFSIZ(next_tx_fifo), TX_FIFO_SIZE << 16 | next_tx_fifo_addr);
+        if (pep)
+            write32(dev->regs + DWC2_DTXFSIZ(next_tx_fifo), TX_FIFO_SIZE << 16 | next_tx_fifo_addr);
         // usb_debug_printf("DWC2_DTXFSIZ(next_tx_fifo)= %x\n", DWC2_DTXFSIZ(next_tx_fifo));
-        next_tx_fifo_addr += TX_FIFO_SIZE;
+        if (pep)
+            next_tx_fifo_addr += TX_FIFO_SIZE;
         if (ep == USB_LEP_CDC_INTR_IN || ep == USB_LEP_CDC_INTR_IN_2)
             val |= 1 << 26; // CNAK
         daint_mask_shift = pep;
@@ -514,6 +517,8 @@ static int usb_dwc2_ep_activate(dwc2_dev_t *dev, u8 ep, u8 type, u32 max_packet_
         write32(ep_ctl_reg, 0);
         daint_mask_shift = pep + 16;
     }
+    if (pep == 0 && max_packet_len == 64)
+        max_packet_len = 0;
     if (ep_ctl_reg)
         write32(ep_ctl_reg, val | type << 18 | DWC2_DXEPCTL_ActivateEP | max_packet_len);
     set32(dev->regs + DWC2_DAINTMSK, (1 << daint_mask_shift));
@@ -1286,15 +1291,21 @@ static void usb_dwc2_handle_usbrst(dwc2_dev_t *dev)
     write32(dev->regs + DWC2_DTXFSIZ(4), 0x0040022b);                         // 256 bytes
     write32(dev->regs + DWC2_DOEPCTL(0), 0);
     write32(dev->regs + DWC2_DIEPCTL(0), 0);
-    write32(dev->regs + DWC2_GINTSTS,
-            read32(dev->regs + DWC2_GINTSTS)); // write bit 1 to clear int status before enable it
+    /* The dispatcher acknowledges events; preserve new enumeration events. */
     set32(dev->regs + DWC2_GINTMSK, DWC2_GINTMSK_IEPIntMsk | DWC2_GINTMSK_OEPIntMsk);
     write32(dev->regs + DWC2_DOEPMSK,
             DWC2_DOEPMSK_XferComplMsk | DWC2_DOEPMSK_AHBErrMsk | DWC2_DOEPMSK_SetUPMsk);
     write32(dev->regs + DWC2_DIEPMSK,
             DWC2_DIEPMSK_XferComplMsk | DWC2_DIEPMSK_AHBErrMsk | DWC2_DIEPMSK_TimeOUTMsk);
     write32(dev->regs + DWC2_DAINTMSK, 0);
-    // usb_dwc2_ep_enable_recv(dev, USB_LEP_CTRL_OUT);
+    int phy_node = adt_path_offset(adt, "/arm-io/atc-phy");
+    if (phy_node >= 0 && adt_is_compatible(adt, phy_node, "atc-phy,t8030")) {
+        usb_dwc2_ep_activate(dev, USB_LEP_CTRL_OUT, 0, EP0_MAX_PACKET_SIZE);
+        usb_dwc2_ep_activate(dev, USB_LEP_CTRL_IN, 0, EP0_MAX_PACKET_SIZE);
+        usb_dwc2_start_setup_phase(dev);
+        dev->ep0_state = USB_DWC2_EP0_STATE_SETUP_HANDLE;
+        dev->ep0_read_buffer_len = 0;
+    }
     /* clear STALL mode for all endpoints */
     // USB_DEBUG_PRINT_REGISTERS(dev);
     // usb_debug_printf("GINTMSK=%x after rst\n", read32(dev->regs + DWC2_GINTMSK));
@@ -1396,11 +1407,13 @@ void usb_dwc2_handle_interrupts(dwc2_dev_t *dev)
     }
 }
 
-dwc2_dev_t *usb_dwc2_init(u64 regs)
+dwc2_dev_t *usb_dwc2_init(u64 regs, dart_dev_t *dart)
 {
     /* version check */
     u32 snpsid = read32(regs + DWC2_GSNPSID);
     if ((snpsid & DWC2_GSNPSID_MASK) != 0x4f540000) {
+        if (dart)
+            dart_shutdown(dart);
         usb_error_printf("No DWC2 core found at: 0x%lx: %08x\n", regs, snpsid);
         return NULL;
     }
@@ -1408,8 +1421,11 @@ dwc2_dev_t *usb_dwc2_init(u64 regs)
     uart_printf("usb-dwc2: Core version %04x\n", snpsid & 0xffff);
 
     dwc2_dev_t *dev = calloc(1, sizeof(*dev));
-    if (!dev)
+    if (!dev) {
+        if (dart)
+            dart_shutdown(dart);
         return NULL;
+    }
 
     memset(dev, 0, sizeof(*dev));
     for (int i = 0; i < CDC_ACM_PIPE_MAX; i++)
@@ -1417,6 +1433,7 @@ dwc2_dev_t *usb_dwc2_init(u64 regs)
                sizeof(cdc_default_line_coding));
 
     dev->regs = regs;
+    dev->dart = dart;
 #ifdef LOG_REGISTER_RW
     debug_reg_base = regs;
 #endif
@@ -1431,11 +1448,13 @@ dwc2_dev_t *usb_dwc2_init(u64 regs)
 
     usb_debug_printf("allocated dma_page at %p\n", dev->dma_page_p);
 
-    /* prepare endpoint buffers */
-    for (int i = 0; i < MAX_ENDPOINTS; ++i) {
-        u32 xferbuffer_offset = i * DMA_BUFFER_SIZE;
-        dev->endpoints[i].xfer_buffer = dev->dma_page_p + xferbuffer_offset;
-    }
+    /* DMA addresses are truncated to 32 bits. Map the aligned allocation
+     * once; individual endpoint buffers are not 16K-aligned. */
+    if (dart && dart_map(dart, (u32)(uintptr_t)dev->dma_page_p, dev->dma_page_p,
+                         max(DMA_BUFFER_SIZE * MAX_ENDPOINTS, SZ_16K)) < 0)
+        goto error;
+    for (int i = 0; i < MAX_ENDPOINTS; ++i)
+        dev->endpoints[i].xfer_buffer = dev->dma_page_p + i * DMA_BUFFER_SIZE;
 
     /* prepare CDC ACM interfaces */
     dev->pipe[CDC_ACM_PIPE_0].ep_intr = USB_LEP_CDC_INTR_IN;
@@ -1460,7 +1479,7 @@ dwc2_dev_t *usb_dwc2_init(u64 regs)
 
     switch (hsphy_type) {
         case 0b00: /* No HS */
-            return NULL;
+            goto error;
         case 0b01: /* UTMI+ */
             if (gusbcfg & DWC2_GUSBCFG_PHYIF16) {
                 gusbcfg = DWC2_GUSBCFG_PHYIF16 | FIELD_PREP(GUSBCFG_USBTRDTIM_MASK, 5);
@@ -1475,7 +1494,20 @@ dwc2_dev_t *usb_dwc2_init(u64 regs)
             break;
     }
 
+    int phy_node = adt_path_offset(adt, "/arm-io/atc-phy");
+    bool t8030 = phy_node >= 0 && adt_is_compatible(adt, phy_node, "atc-phy,t8030");
+    if (t8030)
+        gusbcfg = DWC2_GUSBCFG_PHYIF16 | FIELD_PREP(GUSBCFG_USBTRDTIM_MASK, 5);
     set32(regs + DWC2_DCTL, DWC2_DCTL_SftDisCon);
+    if (t8030) {
+        mdelay(100);
+        set32(regs + DWC2_GRSTCTL, DWC2_GRSTCTL_CSFTRST);
+        if (poll32(regs + DWC2_GRSTCTL, DWC2_GRSTCTL_CSFTRST, 0, 10000) < 0 ||
+            poll32(regs + DWC2_GRSTCTL, BIT(31), BIT(31), 10000) < 0)
+            goto error;
+        mdelay(100);
+        set32(regs + DWC2_DCTL, DWC2_DCTL_SftDisCon);
+    }
     write32(regs + DWC2_GAHBCFG, FIELD_PREP(DWC2_GAHBCFG_HBSTLEN_MASK, 7) | DWC2_GAHBCFG_DMA_EN);
     write32(regs + DWC2_GUSBCFG, gusbcfg);
     write32(regs + DWC2_DCFG, DCFG_NZ_STS_OUT_HSHK);
@@ -1489,8 +1521,6 @@ dwc2_dev_t *usb_dwc2_init(u64 regs)
     write32(regs + DWC2_DOEPINT(0), DWC2_DOEPINT_XFER_COMPL | DWC2_DOEPINT_EPDisabled |
                                         DWC2_DOEPINT_AHBErr | DWC2_DOEPINT_SETUP);
     write32(regs + DWC2_GINTMSK, DWC2_GINTSTS_ENUMDoneMsk | DWC2_GINTSTS_USBRstMsk);
-    clear32(regs + DWC2_DCTL, DWC2_DCTL_SftDisCon);
-
     /* prepare control endpoint 0 IN and OUT */
     if (usb_dwc2_ep_activate(dev, USB_LEP_CTRL_IN, 0, 64))
         goto error;
@@ -1498,6 +1528,11 @@ dwc2_dev_t *usb_dwc2_init(u64 regs)
         goto error;
 
     dev->ep0_state = USB_DWC2_EP0_STATE_IDLE;
+    if (t8030) {
+        usb_dwc2_handle_usbrst(dev);
+        write32(regs + DWC2_GINTSTS, read32(regs + DWC2_GINTSTS) & SUPPORTED_GINST);
+    }
+    clear32(regs + DWC2_DCTL, DWC2_DCTL_SftDisCon);
 
     usb_debug_printf("init() done, usb_dwc2_handle_events = %p\n", usb_dwc2_handle_events);
 
@@ -1524,6 +1559,9 @@ void usb_dwc2_shutdown(dwc2_dev_t *dev)
 
     if (poll32(dev->regs + DWC2_GRSTCTL, DWC2_GRSTCTL_CSFTRST, 0, 10000))
         usb_error_printf("Failed to reset the controller\n");
+
+    if (dev->dart)
+        dart_shutdown(dev->dart);
 
     for (int i = 0; i < CDC_ACM_PIPE_MAX; i++) {
         ringbuffer_free(dev->pipe[i].device2host);

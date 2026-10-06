@@ -1237,6 +1237,7 @@ class M1N1Proxy(Reloadable):
     def cpufreq_unrestrict_boost(self):
         return self.request(self.P_CPUFREQ_UNRESTRICT_BOOST)
 
+
 __all__.extend(k for k, v in globals().items()
                if (callable(v) or isinstance(v, type)) and v.__module__ == __name__)
 

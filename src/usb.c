@@ -10,9 +10,11 @@
 #include "soc.h"
 #include "string.h"
 #include "tps6598x.h"
+#include "tunables.h"
 #include "types.h"
 #include "usb_complex.h"
 #include "usb_dwc2.h"
+#include "usb_dwc2_regs.h"
 #include "usb_dwc3.h"
 #include "usb_dwc3_regs.h"
 #include "usb_types.h"
@@ -344,15 +346,23 @@ int usb_complex_init(struct usb_complex_config *config)
                     USBX_REMAP_TO_DRAM_BITS_T8011);
             break;
         case USBCOMPLEX_T8015:
+        case USBCOMPLEX_T8020:
             write32(config->USBComplexBase + USBX_CTL_T8011, USBX_CTL_EN_T8011);
-            write32(config->USBComplexBase + USBX_EHCI0_REMAP_CTL_T8015,
-                    USBX_REMAP_TO_DRAM_BITS_T8011);
-            write32(config->USBComplexBase + USBX_OHCI0_REMAP_CTL_T8015,
-                    USBX_REMAP_TO_DRAM_BITS_T8011);
-            write32(config->USBComplexBase + USBX_EHCI1_REMAP_CTL_T8015,
-                    USBX_REMAP_TO_DRAM_BITS_T8011);
-            write32(config->USBComplexBase + USBX_USBDEV_REMAP_CTL_T8015,
-                    USBX_REMAP_TO_DRAM_BITS_T8011);
+            if (!config->dart) {
+                write32(config->USBComplexBase + USBX_EHCI0_REMAP_CTL_T8015,
+                        USBX_REMAP_TO_DRAM_BITS_T8011);
+                write32(config->USBComplexBase + USBX_OHCI0_REMAP_CTL_T8015,
+                        USBX_REMAP_TO_DRAM_BITS_T8011);
+                write32(config->USBComplexBase + USBX_EHCI1_REMAP_CTL_T8015,
+                        USBX_REMAP_TO_DRAM_BITS_T8011);
+                write32(config->USBComplexBase + USBX_USBDEV_REMAP_CTL_T8015,
+                        USBX_REMAP_TO_DRAM_BITS_T8011);
+            } else {
+                write32(config->USBComplexBase + USBX_EHCI0_REMAP_CTL_T8015, 0);
+                write32(config->USBComplexBase + USBX_OHCI0_REMAP_CTL_T8015, 0);
+                write32(config->USBComplexBase + USBX_EHCI1_REMAP_CTL_T8015, 0);
+                write32(config->USBComplexBase + USBX_USBDEV_REMAP_CTL_T8015, 0);
+            }
             break;
         default:
             printf("usb: Unsupported complex type!\n");
@@ -375,14 +385,14 @@ int usb_complex_init(struct usb_complex_config *config)
     dwc2_dev_t *opaque;
     struct iodev *usb_iodev;
 
-    opaque = usb_dwc2_init(config->DWC2Base);
+    opaque = usb_dwc2_init(config->DWC2Base, config->dart);
     if (!opaque)
         return -1;
 
     usb_iodev = memalign(SPINLOCK_ALIGN, sizeof(*usb_iodev));
     if (!usb_iodev)
         return -1;
-
+    set32(config->USB2Phy_Base + USBX_OTG_SIG, USBX_OTG_SIG_VBUSDET_FORCE_EN);
     usb_iodev->ops = &iodev_usb_dwc2_ops;
     usb_iodev->opaque = opaque;
     usb_iodev->usage = USAGE_CONSOLE | USAGE_UARTPROXY;
@@ -392,10 +402,11 @@ int usb_complex_init(struct usb_complex_config *config)
     printf("USB0: initialized at %p\n", opaque);
 
     usb_is_initialized = true;
-    set32(config->USB2Phy_Base + USBX_OTG_SIG, USBX_OTG_SIG_VBUSDET_FORCE_EN);
 
     return 0;
 }
+
+#define DART_USB_COMPLEX "/arm-io/dart-usb"
 
 int usb_complex_init_adt(void)
 {
@@ -454,6 +465,8 @@ int usb_complex_init_adt(void)
         type = USBCOMPLEX_S5L8960X;
     } else if (adt_is_compatible(adt, usbComplex_offset, "usb-complex,t8015")) {
         type = USBCOMPLEX_T8015;
+    } else if (adt_is_compatible(adt, usbComplex_offset, "usb-complex,t8020")) {
+        type = USBCOMPLEX_T8020;
     }
     // This must be last because of the fallback compatible to usb-complex,t8011 on t8015
     else if (adt_is_compatible(adt, usbComplex_offset, "usb-complex,t8011")) {
@@ -482,13 +495,109 @@ int usb_complex_init_adt(void)
         .type = type,
     };
 
+    // Use DART to remap
+    int dart_path[8];
+    int dart_offset;
+
+    if ((dart_offset = adt_path_offset_trace(adt, DART_USB_COMPLEX, dart_path)) > 0) {
+        config.dart = dart_init_adt(DART_USB_COMPLEX, 0, 0, false);
+        if (!config.dart) {
+            printf("usb: DART init failed!\n");
+            return -1;
+        }
+
+        if (pmgr_adt_power_enable_index("/arm-io/usb-complex", 2) < 0) {
+            printf("usb: could not enable /arm-io/usb-complex power domain 2\n");
+            return -1;
+        }
+    }
+
     return usb_complex_init(&config);
+}
+
+static bool usb_has_t8030_phy(void)
+{
+    int node = adt_path_offset(adt, "/arm-io/atc-phy");
+    return node >= 0 && adt_is_compatible(adt, node, "atc-phy,t8030");
+}
+
+/* T8030 has an unindexed PHY and a separate DWC2 device controller.
+ * Address derivation and routing follow PongoOS's t8030 USB driver. */
+static int usb_t8030_init(void)
+{
+    int phy_path[8];
+    u64 complex, phy, size;
+    usb_type = USB_TYPE_DWC2;
+    if (adt_path_offset_trace(adt, "/arm-io/atc-phy", phy_path) < 0 ||
+        adt_get_reg(adt, phy_path, "reg", 0, &complex, NULL) < 0 ||
+        adt_get_reg(adt, phy_path, "reg", 1, &phy, &size) < 0 || size != 0x20)
+        return -1;
+
+    int mapper = adt_path_offset(adt, "/arm-io/dart-usb/mapper-usb-device");
+    u32 sid;
+    if (mapper < 0 || ADT_GETPROP(adt, mapper, "reg", &sid) < 0 || sid != 0)
+        return -1;
+
+    const char *domains[] = {"USB", "C0_USBCTL", "C0_USB2DEV"};
+    for (unsigned int i = 0; i < 3; i++)
+        if (pmgr_power_on(0, domains[i]) < 0)
+            return -1;
+    for (unsigned int i = 0; i < 3; i++)
+        if (pmgr_reset(0, domains[i]) < 0)
+            return -1;
+    if (pmgr_adt_power_enable("/arm-io/dart-usb") < 0)
+        return -1;
+
+    write32(complex, 0);
+    write32(complex + 0x48, 0x3000088);
+    if (tunables_apply_global("/arm-io/atc-phy", "tunable-device") < 0)
+        return -1;
+    set32(phy + USBX_OTG_CTL, USBX_OTG_CTL_RESET);
+    udelay(20);
+    clear32(phy + USBX_OTG_CTL, USBX_OTG_CTL_PWRDOWN | USBX_OTG_CTL_SIDDQ);
+    udelay(20);
+    clear32(phy + USBX_OTG_CTL, USBX_OTG_CTL_RESET);
+    udelay(20);
+    clear32(phy + USBX_OTG_SIG, USBX_OTG_SIG_VBUSDET_FORCE_EN);
+    udelay(1500);
+
+    u64 regs = (phy & ~0xfffULL) + 0x100000;
+    if ((read32(regs + DWC2_GSNPSID) & DWC2_GSNPSID_MASK) != 0x4f540000)
+        return -1;
+    struct iodev *iodev = memalign(SPINLOCK_ALIGN, sizeof(*iodev));
+    if (!iodev)
+        return -1;
+    dart_dev_t *dart = dart_init_adt("/arm-io/dart-usb", 1, sid, false);
+    if (!dart) {
+        free(iodev);
+        return -1;
+    }
+    dwc2_dev_t *dev = usb_dwc2_init(regs, dart);
+    if (!dev) {
+        free(iodev);
+        return -1;
+    }
+    set32(phy + USBX_OTG_SIG, USBX_OTG_SIG_VBUSDET_FORCE_EN);
+    iodev->ops = &iodev_usb_dwc2_ops;
+    iodev->opaque = dev;
+    iodev->usage = USAGE_CONSOLE | USAGE_UARTPROXY;
+    spin_init(&iodev->lock);
+    iodev_register_device(IODEV_USB0, iodev);
+    usb_is_initialized = true;
+    printf("USB0: initialized at %p\n", dev);
+    return 0;
 }
 
 void usb_init(void)
 {
     if (usb_is_initialized)
         return;
+
+    if (usb_has_t8030_phy()) {
+        if (usb_t8030_init() < 0)
+            printf("usb: T8030 device initialization failed\n");
+        return;
+    }
 
     /*
      * M3/M4 models do not use i2c, but instead SPMI with a new controller.
@@ -575,6 +684,8 @@ void usb_i2c_restore_irqs(const char *i2c_path, bool force)
 
 void usb_hpm_restore_irqs(bool force)
 {
+    if (usb_has_t8030_phy())
+        return;
     /*
      * Do not try to restore irqs on M3/M4 which don't use i2c
      */
@@ -595,6 +706,8 @@ void usb_hpm_restore_irqs(bool force)
 
 void usb_iodev_init(void)
 {
+    if (usb_has_t8030_phy())
+        return;
     if (adt_path_offset(adt, "/arm-io/otgphyctrl") > 0 &&
         adt_path_offset(adt, "/arm-io/usb-complex") > 0) {
         return; // already init in usb_init() since we do have only 1 usb port
@@ -631,6 +744,8 @@ void usb_iodev_shutdown(void)
         printf("USB%d: shutdown\n", i);
         if (usb_type == USB_TYPE_DWC2) {
             usb_dwc2_shutdown(usb_iodev->opaque);
+            free(usb_iodev);
+            usb_is_initialized = false;
             return;
         } else {
             usb_dwc3_shutdown(usb_iodev->opaque);

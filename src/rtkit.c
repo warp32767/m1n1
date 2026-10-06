@@ -71,9 +71,6 @@
 #define RTKIT_MIN_VERSION 10
 #define RTKIT_MAX_VERSION 12
 
-#define RTKIT_APP_EP_START_V10 0x5
-#define RTKIT_APP_EP_START_V11 0x20
-
 #define RTKIT_AKF_MSG_EP  GENMASK(63, 56)
 #define RTKIT_AKF_MSG_MSG GENMASK(55, 0)
 
@@ -814,6 +811,7 @@ bool rtkit_boot(rtkit_dev_t *rtk)
     if (has_oslog && !rtkit_start_ep(rtk, RTKIT_EP_OSLOG))
         return false;
 
+    u64 power_timeout = timeout_calculate(USEC_PER_SEC);
     while (rtk->iop_power != RTKIT_POWER_ON) {
         struct rtkit_message rtk_msg;
         bool handled = false;
@@ -829,6 +827,11 @@ bool rtkit_boot(rtkit_dev_t *rtk)
             if (!handled)
                 rtkit_printf("unexpected message to non-system endpoint 0x%02x during boot: %lx\n",
                              rtk_msg.ep, rtk_msg.msg);
+        }
+
+        if (timeout_expired(power_timeout)) {
+            rtkit_printf("timed out waiting for IOP power-on\n");
+            return false;
         }
     }
 
@@ -931,4 +934,12 @@ bool rtkit_sleep(rtkit_dev_t *rtk)
 u8 rtkit_protocol_version(rtkit_dev_t *rtk)
 {
     return rtk->protocol_ver;
+}
+
+u8 rtkit_app_ep_to_ep(rtkit_dev_t *rtk, u8 app_ep)
+{
+    if (rtk->app_ep_start == RTKIT_EP_CRASHLOG)
+        return 0;
+
+    return rtk->app_ep_start + app_ep;
 }
