@@ -490,7 +490,8 @@ REGION_RX_EL1 = 0xc0000000000
 SleepMode = "SleepMode" / Enum(Int32ul,
     SLEEP_NONE = 0,
     SLEEP_LEGACY = 1,
-    SLEEP_GLOBAL = 2,
+    SLEEP_CLUSTER = 2,
+    SLEEP_GLOBAL = 3,
 )
 
 UncoreVersion = "UncoreVersion" / Enum(Int32ul,
@@ -502,8 +503,10 @@ UncoreVersion = "UncoreVersion" / Enum(Int32ul,
 CPUFeatures = Struct(
     "sleep_mode" / SleepMode,
     "uncore_version" / UncoreVersion,
+    "optional_deep_wfi_retention" / bool_,
     "disable_dc_mva" / bool_,
     "acc_cfg" / bool_,
+    "cyc_ovrd" / bool_,
     "apple_sysregs_unlocked" / bool_,
     "workaround_cyclone_cache" / bool_,
     "nex_powergating" / bool_,
@@ -513,7 +516,8 @@ CPUFeatures = Struct(
     "amx" / bool_,
     "actlr_el2" / bool_,
     "counter_redirect" / bool_,
-    "padding" / Bytes(1),
+    "impl_status" / bool_,
+    "padding" / Bytes(2),
 )
 
 # Uses UartInterface.proxyreq() to send requests to M1N1 and process
